@@ -1,0 +1,228 @@
+---
+title: "Historical NYC Shooting Analysis Project"
+author: "Nicholas Cianci"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Historical NYC Shooting Project 
+
+## Step 1
+
+To begin, initialize the "tidyverse" package to facilitate importing and
+cleaning our data set.
+
+```{r Load Library, message=FALSE}
+library("tidyverse")
+library("lubridate")
+
+```
+
+The next step in this project is to describe and import the historical NYC
+shooting data set.View the summary of the data set to help understand the values
+and types of each column.Preview the first few rows of the data to evaluate
+what fields should stay and what should be removed.
+
+```{r NYC Shooting}
+#Import the Historical NYC Shooting data set
+nyc_shooting <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+
+#View the Summary of the NYC Shooting data set
+summary(nyc_shooting)
+
+
+```
+
+Before jumping into any analysis, I wanted to take a moment to identify
+some biases that I may have when doing this kind of project. To begin,
+I think that gun violence is a big issue in this country, especially in big
+cities like New York City. Because of this, I may be more inclined to show 
+analysis and visualizations that are alarming or show how "bad" the number of 
+shootings are. Another potential bias is around Perpetrator and Victim 
+characteristics. The data set includes things like age, sex, and race of both
+the shooter and the victim. If somebody had an agenda for or against a certain
+age group, sex, or race, the data could be manipulated to support what you want
+to show. 
+
+To avoid these potential biases, I tried to analyze and visualize the data in 
+a holistic view such as the total number of shootings and murders over time. I
+intentionally decided to not single out any specific age group, sex, or race of 
+either the shooters or the victims as to avoid any bias against any particular
+subsection of people.
+
+
+## Step 2 - Tidy and Transform Data
+
+Remove all unnecessary fields in the NYC Shooting Data set by using the
+"select" function.Convert "OCCUR_DATE" from "character" field to a "date" field
+and convert the "BORO", "VIC_AGE_GROUP", "VIC_SEX", and "VIC_RACE" columns 
+from "character" to "factor" fields using the mutate function.Check for missing
+data and found 64 rows with "Unknown" listed in "VIC_AGE_GROUP" and 12 rows
+with "U" listed for "VIC_SEX".Considering the unknown data was very small
+relative to the 28,562 total rows of data, I decided to remove the rows with
+missing data via the "filter" function.
+
+```{r Tidy}
+#Remove unnecessary fields, convert fields to date and factor as needed
+nyc_shooting <- nyc_shooting %>% 
+      select(-c(INCIDENT_KEY,LOC_OF_OCCUR_DESC,LOC_CLASSFCTN_DESC,
+                LOCATION_DESC,PRECINCT,JURISDICTION_CODE,
+                PERP_AGE_GROUP:PERP_RACE ,X_COORD_CD:Lon_Lat)) %>%
+      mutate(OCCUR_DATE=mdy(OCCUR_DATE)) %>%
+      mutate(BORO=factor(BORO),VIC_AGE_GROUP=factor(VIC_AGE_GROUP),
+             VIC_SEX=factor(VIC_SEX),VIC_RACE=factor(VIC_RACE)) %>%
+      mutate(STATISTICAL_MURDER_FLAG = as.logical(STATISTICAL_MURDER_FLAG))
+
+#Limited number of unknown values, 64 rows with "Unknown" and 12 rows with "U",
+#out of a total of 28,562 rows
+nyc_shooting <- nyc_shooting %>% 
+  filter(VIC_AGE_GROUP!="UNKNOWN") %>%
+  filter(VIC_SEX != "U")
+
+
+```
+
+## Step 3 - Analyze and Visualize the Data
+
+The first thing I investigated was the total number of shootings and the total
+number of murders that occurred over the time span captured in this data set. 
+To do this, I grouped the dates of each shooting by month and created two
+fields to count the number of shootings and number of murders for each month. 
+Next I plotted the number of shootings and murders over time on the same plot,
+adding color and labels where necessary.
+
+```{r Analyze and Visualize}
+#Analyze data by grouping the individual dates into months and creating two
+#new fields that count the total number of shootings and the total number
+#of murders for each month
+
+nyc_total <- nyc_shooting %>%
+  group_by(OCCUR_MONTH = floor_date(OCCUR_DATE, 'month')) %>%
+  summarise(num_shootings = n(), num_murders = sum(STATISTICAL_MURDER_FLAG))
+
+#Visualize both the total shootings and total murders as line graphs on the
+#same plot along with appropriate legend, and title.
+
+nyc_total %>% 
+  ggplot(aes(x=OCCUR_MONTH, y = num_shootings))+
+  geom_line(aes(color = "num_shootings")) +
+  geom_point(aes(color = "num_shootings")) +
+  geom_line(aes(y = num_murders, color = "num_murders")) +
+  geom_point(aes(y = num_murders, color = "num_murders")) +
+  theme(legend.position = "bottom") +
+  labs(title = "NYC Shooting Data by Month")
+```
+
+Next I was curious about the breakdown of shootings across the different Boros.
+To address this question I grouped the data by both "Boro" and "OCCUR_MONTH"
+and again counted the total number of shootings. At first I did this for the 
+entirety of the data set but the resulting plot was too crowded to make sense of 
+anything. So I decided to filter the view down to just the year of 2023 and 
+visualize that by way of a stacked bar chart. 
+
+```{r by Boro}
+#Group by Boro and filter for 2023 and beyond
+nyc_by_boro <- nyc_shooting %>%
+  filter(OCCUR_DATE >= "2023-1-01") %>%
+  group_by(BORO, OCCUR_MONTH= floor_date(OCCUR_DATE, 'month')) %>%
+  summarise(num_shootings = n()) 
+
+#Visualize stacked bar chart that shows each boro's # of shootings for each
+#month of 2023
+
+nyc_by_boro %>% 
+  ggplot(aes(fill=BORO, y=num_shootings, x=OCCUR_MONTH)) +
+  geom_bar(position = "stack", stat="identity") +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle=90, vjust=0.5))+
+  scale_x_date(breaks="1 month")+
+  labs(title = "Number of Shootings by Boro over 2023")
+
+
+```
+## Step 4 - Model the Data
+
+During this step I created a simple linear regression model that uses the 
+number of shootings to predict the number of murders using the nyc_total data
+set we created in Step 3. Using summary() we were able to see that our model is
+in fact statistically significance as evidence by an extremely small p-value.
+Next, we add a new field "pred" to the data set that is predictions of the 
+number of murders based on the number of deaths. I then plotted the actual
+number of murders against the number of shootings AND overlay-ed that with
+predicted number of murders against the number of shootings.
+
+
+```{r Model}
+#Create linear regression model that uses the total number of shootings to
+#predict the total number of murders
+model <- lm(num_murders ~ num_shootings, data = nyc_total)
+
+#View the summary to determine how good (or bad) the model is
+summary(model)
+
+#Add a new field that uses the model to make predictions
+nyc_total_w_pred <- nyc_total %>% mutate(pred = predict(model))
+
+#visually compare the actuals against the predictions
+nyc_total_w_pred %>% ggplot()+
+  geom_point(aes(x=num_shootings, y=num_murders), color = "blue")+
+  geom_point(aes(x=num_shootings, y=pred), color = "red")
+                      
+
+```
+
+
+ 
+
+## Step 5 - Conclusion
+
+In conclusion, I was able to load in the historical NYC shooting data set, 
+remove fields that I did not want to use, clean up rows with missing data, 
+analyze and visualize the data with intention, create a simply linear regression
+model, and identified some potential sources of bias in myself regarding
+this project.
+
+At the start of the project, I found myself curious to learn about the data set
+and found the summary() function to be very helpful. The summary view informed 
+my next set of decisions which was what fields I wanted to keep/remove and what
+kind of NA/Unknown data was in our data set. After I decided on the fields to 
+keep, I decided to remove the rows with missing data. I came to this decision
+because the number of rows with missing data were so few compared to the total
+number of rows that I didn't think it would affect the results.
+
+I then came up with some general questions I wanted to investigate. These
+questions motivated my initial analysis and visualization which lead me to
+more questions and ultimately more analysis and more visualization.
+
+It was very interesting to see how quickly new questions came up once I started
+exploring the data set. There were countless paths I wanted to investigate but
+found myself having to take a step back and re-focus for the sake of the 
+assignment. 
+
+Ultimately, I was able to uncover some interesting findings. We can see from
+the line graphs that shootings tend to follow a similar pattern of high's and
+low's year after year based on the month. The summer months tend to have the
+highest number of shootings while the winter months tend to have lower numbers
+of shootings. This is supported by the stacked bar chart which shows the same
+trend but specifically for the year 2023. The bar chart also gives us some
+insight into which Boro's had the most shootings in the year of 2023. Staten
+Island consistently had the lowest and Brooklyn, and the Bronx typically 
+had the most. I was also able to investigate the obvious theory that the number
+of shootings is a good predictor of the number of murders that will occur. This
+was accomplished by creating a linear regression model which was used to create
+predicted values. Finally, I plotted both the actual murders and the predicted
+murders on the same graph which clearly visualized a linear relationship.
+
+
+```{r session info}
+
+sessionInfo()
+
+```
+
