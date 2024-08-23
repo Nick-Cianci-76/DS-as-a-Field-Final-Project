@@ -1,0 +1,428 @@
+---
+title: "COVID 19 Analysis"
+author: "Nicholas Cianci"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# COVID 19 Final Project
+
+This is an exploratory data analysis project that dives into the John Hopkins
+COVID-19 data set that includes Global and US case and death data 
+which is publicly available on GitHub. 
+
+To begin, I want to address some potential biases. COVID-19 data was a very
+intense time for the world, myself included. Each person has their own opinion
+how it was handled, what was effective vs. what was not, and what we could 
+have done differently. It would be relatively easy to manipulate this data to 
+support a pre-existing notion or agenda. It is important to understand and 
+identify this potential upfront, so that I can proceed with every intention of 
+remaining unbias in my exploration of this COVID-19 data set.
+
+## Load Packages and Data
+
+To begin, I installed and loaded two packages - tidyverse and lubridate to help
+with my analysis throughout the project.
+I then used the github links to read in the several csv files containing our
+COVID-19 data.
+
+```{r load}
+#Load the tidyverse library package for use
+library("tidyverse")
+library("lubridate")
+
+#Bring in the data from the github repository
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv", "time_series_covid19_confirmed_US.csv",  "time_series_covid19_deaths_US.csv")
+
+urls<- str_c(url_in,file_names)
+
+#Load each file into it's own object
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+
+```
+
+## Tidy Data Global Data
+
+The Global data was split up between case data, death data, and Population data.
+I decided to standardize and join them to give us one all-encompassing global
+data set. I accomplished this through the use of pivots and joins.
+
+```{r Tidy Global Data}
+# Tidy Global Cases data
+global_cases <- global_cases %>% 
+  pivot_longer(cols = -c('Province/State',
+                        'Country/Region', Lat, Long),
+               names_to = "date", 
+               values_to = "cases") %>%
+  select(-c(Lat, Long))
+
+# Tidy Global Death data
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region', Lat, Long),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(-c(Lat,Long))
+
+# Join Global cases and death data into one global data set
+global <- global_cases %>% 
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region',
+         Province_State = 'Province/State') %>%
+  mutate(date = mdy(date))
+
+# Review summary of joined data set
+summary(global)
+
+#Standardize global data set with US data set
+global <- global %>%
+  unite("Combined_Key", c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE, 
+        remove = FALSE)
+
+#Read in additional file that has global population data
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat,Long_,Combined_Key,code3,iso2,iso3, Admin2))
+
+
+#Join the global data set with new data that contains the global populations
+global<- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths,
+         Population, Combined_Key)
+
+#View sample of newly joined global data set
+tail(global)
+
+```
+## Analyze and Visualize Global Data
+
+In this step, I analyzed and visualized the Global data set in a variety of
+ways. To begin, I grouped the data so that there was 1 row for each
+Country/Region that included the total number of cases, deaths, and
+Country/Region Population along with two new fields which calculate the number
+of cases and deaths per 1 million people. These calculated fields will help us
+to see who had the highest rates of cases and deaths. If I only looked at the 
+total number of cases and deaths, I would most likely only see the
+Countries/Regions with the largest populations.
+
+I used this new view of the data to filter for the Countries/Regions that had
+the Top 5 Cases, Deaths, Cases per Million, and Deaths per Million. I then 
+visualized each of these in their own bar chart. The visualizations were
+created using ggplot and geom_bar.
+
+```{r Global Analysis}
+
+Global_by_country <- global %>%
+  group_by(Country_Region) %>%
+  summarize(cases=sum(cases), deaths = sum(deaths),
+            Population=max(Population)) %>%
+  mutate(cases_per_mill = cases*1000000 / Population,
+         deaths_per_mill = deaths*1000000 / Population) %>%
+  select(Country_Region, cases, cases_per_mill, deaths,
+         deaths_per_mill, Population)
+
+#Top 5 Cases by Country
+top_5_global_cases <- Global_by_country %>%
+  top_n(5,cases) %>%
+  arrange(desc(cases)) %>%
+  select(Country_Region,cases,Population)
+
+top_5_global_cases %>%
+  mutate(Country_Region = fct_reorder(Country_Region, cases))%>%
+  ggplot(aes(y=cases,x=Country_Region, fill=Country_Region))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("black", "blue", "green", "orange", "red"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Most Global COVID-19 Cases per Country")
+
+#Top 5 Deaths by Country
+top_5_global_deaths <- Global_by_country %>%
+  top_n(5,deaths) %>%
+  arrange(desc(deaths)) %>%
+  select(Country_Region,deaths,Population)
+
+top_5_global_deaths %>%
+  mutate(Country_Region = fct_reorder(Country_Region, deaths))%>%
+  ggplot(aes(y=deaths,x=Country_Region, fill=Country_Region))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("red4", "springgreen4", "orange", "green", "red"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Most Global COVID-19 Deaths per Country")
+
+#Top 5 Cases per Million by Country
+top_5_global_cpm <- Global_by_country %>%
+  top_n(5,cases_per_mill) %>%
+  arrange(desc(cases_per_mill)) %>%
+  select(Country_Region,cases_per_mill, Population)
+
+top_5_global_cpm %>%
+  mutate(Country_Region = fct_reorder(Country_Region, cases_per_mill))%>%
+  ggplot(aes(y=cases_per_mill,x=Country_Region, fill=Country_Region))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("blue2", "red2", "lightskyblue", "gold1", "navyblue"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Highest Global COVID-19 Cases per Million per Country")
+
+#Top 5 Deaths per Million by Country
+top_5_global_dpm <- Global_by_country %>%
+  top_n(5,deaths_per_mill) %>%
+  arrange(desc(deaths_per_mill)) %>%
+  select(Country_Region,deaths_per_mill, Population)
+
+top_5_global_dpm %>%
+  mutate(Country_Region = fct_reorder(Country_Region, deaths_per_mill))%>%
+  ggplot(aes(y=deaths_per_mill,x=Country_Region, fill=Country_Region))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("firebrick4", "darkolivegreen4", "slateblue4", "mediumseagreen", "orangered4"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Most Global COVID-19 Deaths per Million per Country")
+```
+The Top 5 total cases and deaths bar charts were filled with large
+Countries/Regions with big populations such as India, Brazil, France, Germany 
+and the United States which had the highest number of both cases and deaths.
+
+I was more interested to see which Countries/Regions had the highest cases and 
+deaths per million, and it did not disappoint. These bar charts showed a much 
+different picture as none of the countries with the highest totals were also in
+the highest cases/deaths per million charts. 
+
+The country with the highest cases per million was actually Australia and the
+country with the highest deaths per million was Peru. It was interesting to see
+smaller countries like Andorra, San Marino, and Bosnia and Herzegovina make 
+appearances in those lists as well.
+
+## Tidy US Data
+
+I decided to do a similar process with the US data as I did with the global set.
+I combined the US case and death data into one full US data set and cleared
+out missing data along the way. This again was done with pivots and joins.
+
+```{r Tidy US Data}
+# Tidy US Cases data
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date=mdy(date)) %>%
+  select(-c(Lat,Long_))
+
+# Tidy US Death data
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+# Join US cases and death data into one US data set and clear out missing data
+US_total <- US_cases %>% 
+  full_join(US_deaths) %>%
+  filter(Province_State != "Diamond Princess")%>%
+  filter(Province_State != "Grand Princess")
+
+# Review summary of joined data set
+summary(US_total)
+```
+## Analyze and Visualize US Data
+
+The US data analysis followed the path of the Global data analysis with the key
+difference being I grouped the data by US State rather than by country/region
+and I added fields for cases/deaths per thousand rather than per million people.
+I did this to account for smaller state populations.
+
+
+```{r US Analysis}
+# Group US data by State and add calculated fields
+US_by_state <- US_total %>%
+  group_by(Province_State, Country_Region,date) %>%
+  summarize(cases=sum(cases),deaths=sum(deaths),
+            Population =sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Province_State, Country_Region, date, 
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+US_by_state <- US_by_state %>%
+  group_by(Province_State) %>%
+  summarize(cases=sum(cases), deaths = sum(deaths),
+            Population=max(Population)) %>%
+  mutate(cases_per_thou = cases*1000 / Population,
+         deaths_per_thou = deaths*1000 / Population) %>%
+  select(Province_State, cases, cases_per_thou, deaths, deaths_per_thou, Population)
+
+tail(US_by_state)
+
+```
+
+I decided to mimic the analysis and visualization performed on the global data
+on the us data. Meaning, I filtered the US by State data by top 5 states with
+the most cases, deaths, cases per thousand and deaths per thousand.
+
+Again, each of these filtered views were visualized in the form of a bar chart
+which was created using ggplot and geom_bar.
+
+
+```{r US Analysis + Viz}
+
+#Top 5 Cases by US State
+top_5_us_cases <- US_by_state %>%
+  top_n(5,cases) %>%
+  select(Province_State,cases,Population)
+
+top_5_us_cases %>%
+  mutate(Province_State = fct_reorder(Province_State, cases))%>%
+  ggplot(aes(y=cases,x=Province_State, fill=Province_State))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("orange", "navyblue", "hotpink", "orange4", "gold"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Most COVID-19 Cases per US State")
+
+
+
+#Top 5 Deaths by US State
+top_5_us_deaths <- US_by_state %>%
+  top_n(5,deaths) %>%
+  select(Province_State,deaths,Population)
+
+top_5_us_deaths %>%
+  mutate(Province_State = fct_reorder(Province_State, deaths))%>%
+  ggplot(aes(y=deaths,x=Province_State, fill=Province_State))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("chartreuse4", "hotpink", "navyblue","orange4", "gold"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Most COVID-19 Deaths per US State")
+
+#Top 5 Cases per Thousand by US State
+top_5_us_cpt <- US_by_state %>%
+  top_n(5,cases_per_thou) %>%
+  select(Province_State,cases_per_thou, Population)
+
+top_5_us_cpt %>%
+  mutate(Province_State = fct_reorder(Province_State, cases_per_thou))%>%
+  ggplot(aes(y=cases_per_thou,x=Province_State, fill=Province_State))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("red2", "orange2", "lightskyblue3", "lightgoldenrod4", "goldenrod3"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Highest COVID-19 Cases per Thousand by US State")
+
+#Top 5 Deaths per Thousand by US State
+top_5_us_dpt <- US_by_state %>%
+  top_n(5,deaths_per_thou) %>%
+  select(Province_State,deaths_per_thou, Population)
+
+top_5_us_dpt %>%
+  mutate(Province_State = fct_reorder(Province_State, deaths_per_thou))%>%
+  ggplot(aes(y=deaths_per_thou,x=Province_State, fill=Province_State))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("gold4", "sienna3", "navyblue", "orangered3", "tan"))+
+  theme(legend.position="none")+
+  ggtitle("Top 5 Highest COVID-19 Deaths per Thousand by US State")
+
+```
+
+Similarly to the Global data, the states with the highest number of cases and 
+deaths were states with large populations like California and Texas. 
+
+The state with the highest deaths per thousand people was New Jersey and the
+state with the highest cases per thousand people was Rhode Island. This too 
+follows the pattern of the global data which saw smaller populations have higher
+cases/deaths per thousand or million people. There were a few cases that didn't
+quite follow this pattern such as New York which was in the highest deaths per
+thousand list and Tennessee which was in the highest cases per thousand list.
+
+
+
+## Model Creation and Visualization
+
+I then created two models using linear regression. The first model was more to
+confirm the obvious, which was that the number of cases per thousand is a good
+predictor for the number of deaths per thousand. This was proven to be true 
+by the visualization which shows the predicted values following the same 
+pattern as the actual values on the plot. Additional evidence was provided by
+the very low p-value of the model which proves that cases per thousand is a
+statistically significant predictor of deaths per thousand.
+
+The second model, I created as more of an exploratory exercise. I wanted to see
+if the overall Population was a predictor of cases per thousand. I approached
+this in the same way, by creating a linear regression, adding a new field
+filled with predicted values and plotting the predicted values against the 
+actual values. As it turns out, Population is NOT a good predictor of cases per
+thousand people! We can see this in the visualization, where the predicted
+values does not follow the pattern of the actual values and is further proven
+by a high p-value indicating this model is not statistically significant.
+
+
+```{r Models}
+# Using a linear regression model to predict deaths per thousand using
+# cases per thousand. 
+us_mod1 <- lm(deaths_per_thou ~ cases_per_thou, data = US_by_state)
+summary(us_mod1)
+
+#Visualize actuals vs. predicted values using our first model
+us_state_w_pred1 <- US_by_state %>% mutate(pred = predict(us_mod1))
+us_state_w_pred1 %>% ggplot() +
+  geom_point(aes(x=cases_per_thou, y=deaths_per_thou), color="blue")+
+  geom_point(aes(x=cases_per_thou, y=pred), color="red")
+
+
+# Using a linear regression model to predict cases per thousand using
+# total state Population.
+us_mod2 <- lm(cases_per_thou ~ Population, data=US_by_state)
+summary(us_mod2)
+
+#Visualize actuals vs. predicted values using our second model
+us_state_w_pred2 <- US_by_state %>% mutate(pred_cpt = predict(us_mod2))
+us_state_w_pred2 %>% ggplot() +
+  geom_point(aes(x=Population, y=cases_per_thou), color="blue")+
+  geom_point(aes(x=Population, y=pred_cpt), color="red")
+
+```
+## Conclusion
+
+In conclusion, this was a great exercise in working with multiple data sets. 
+It was certainly a challenge to load, join, tidy, analyze, visualize, and model
+soooo much data. There seemed to be many different paths I could have taken. 
+Ultimately, I had to choose one path as there was simply too much to work with
+to analyze everything.
+
+Throughout the analysis, it was interesting to see some initial thoughts
+confirmed such as the largest countries and states having the most cases and 
+deaths. It was also interesting to see some surprises come into play when 
+investigating the cases/deaths per million/thousand. This was an important
+lesson to learn that raw totals do not always tell the full story, often times
+normalizing the data can provide a new perspective. 
+
+Lastly, I was able to confirm one obvious suspicious using a linear regression 
+model. That being that the number of cases per thousand directly predicts the
+number of deaths per thousand. This makes sense and is supported visually on
+our plot of actuals vs. predictions and with the low p-value of the first model.
+
+We also learned that Population size is NOT a good predictor of cases per
+thousand, at least not by using a linear regression model. While it was a
+little disappointing that my guess was incorrect, it was an important part of
+the project nonetheless. It goes to show that not every chart or model we make
+is going to be significant. And sometimes finding what doesn't work, can help
+lead us to what does.
+
+
+```{r Session}
+
+sessionInfo()
+
+```
+
+
